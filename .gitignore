@@ -1,0 +1,10 @@
+*.html
+*.pkl
+*.db
+*.out
+*.txt
+*.sql
+*.csv
+
+.python-version
+__pycache__/
