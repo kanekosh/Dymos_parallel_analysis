@@ -46,7 +46,7 @@ if __name__ == '__main__':
 
     # --- setup OAS surface ---
     surface, Sref = get_OAS_surface(Sref, span, num_y=21, num_x=5)
-    ### surface, Sref = get_OAS_surface(Sref, span, num_y=7, num_x=2)   # use coarse mesh when computing total coloring
+    ### surface, Sref = get_OAS_surface(Sref, span, num_y=5, num_x=2)   # use coarse mesh when computing total coloring. Also, for this mesh size, DirectSolver at top-level is much faster than PETSc linear solver.
 
     # --------------------------
     # Setup OpenMDAO problem

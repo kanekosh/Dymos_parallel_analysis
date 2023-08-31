@@ -1,8 +1,10 @@
 import numpy as np
 import openmdao.api as om
 
-# TODO: unify all these for any input/output dimensions
-# TODO: when I declare the partial sparsity here, total coloring computation takes forever. What's happining?
+# TODO: unify Vectors2Matrix, Arrays2Dto3D, Arrays3Dto4D for any input/output dimensions
+# TODO (FFR): implement partials for Vectors2Matrix, Arrays2Dto3D, Arrays3Dto4D.
+#             Currently, these components are only used for post-processing purpose (i.e., save time histories for plotting), therefore the lack of partials does not spoil optimization.
+
 
 class Scalars2Vector(om.ExplicitComponent):
     """
@@ -26,12 +28,8 @@ class Scalars2Vector(om.ExplicitComponent):
         self.add_output('vector', shape=(nn,), units=units)
 
         # partials
-        eyemat = np.eye(nn)
         for i in range(nn):
-            self.declare_partials('vector', 'scalar' + str(i), val=eyemat[:, i])
-
-        # partial coloring
-        # self.declare_coloring(wrt='*', method='fd', show_summary=True, show_sparsity=False)
+            self.declare_partials('vector', 'scalar' + str(i), rows=[i], cols=[0], val=1.)
 
     def compute(self, inputs, outputs):
         nn = self.options['num_nodes']
@@ -41,9 +39,6 @@ class Scalars2Vector(om.ExplicitComponent):
         # END FOR
 
         outputs['vector'] = vector
-
-    # def compute_partials(self, inputs, partials):
-    #     pass
 
 
 class Vectors2Matrix(om.ExplicitComponent):
@@ -84,7 +79,6 @@ class Vectors2Matrix(om.ExplicitComponent):
         outputs['matrix'] = matrix
 
     # def compute_partials(self, inputs, partials):
-    #     # TODO: implement partials if this output matrix is used for optimization. Currently, this code is only used to save timehistory, so partials here is not necessary
     #     pass
 
 
@@ -126,7 +120,6 @@ class Arrays2Dto3D(om.ExplicitComponent):
         outputs['array_out'] = array_out
 
     # def compute_partials(self, inputs, partials):
-    #     # TODO: implement partials if this output matrix is used for optimization. Currently, this code is only used to save timehistory, so partials here is not necessary
     #     pass
 
 
@@ -168,5 +161,4 @@ class Arrays3Dto4D(om.ExplicitComponent):
         outputs['array_out'] = array_out
 
     # def compute_partials(self, inputs, partials):
-    #     # TODO: implement partials if this output matrix is used for optimization. Currently, this code is only used to save timehistory, so partials here is not necessary
     #     pass

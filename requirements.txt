@@ -19,7 +19,6 @@ packaging==23.1
 petsc==3.19.4
 petsc4py==3.19.4
 Pillow==10.0.0
-pyoptsparse==2.9.2
 pyparsing==3.0.9
 python-dateutil==2.8.2
 requests==2.31.0

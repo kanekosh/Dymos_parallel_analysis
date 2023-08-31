@@ -9,80 +9,11 @@ from openaerostruct.integration.aerostruct_groups import AerostructGeometry, Aer
 from utils import Scalars2Vector, Vectors2Matrix, Arrays2Dto3D, Arrays3Dto4D
 
 
-class DynamicPressureComp(om.ExplicitComponent):
-    def initialize(self):
-        self.options.declare('num_nodes', types=int)
-
-    def setup(self):
-        nn = self.options['num_nodes']
-        self.add_input(name='rho', val=0.5 * np.ones(nn), desc='atmospheric density', units='kg/m**3')
-        self.add_input(name='v', shape=(nn,), desc='air-relative velocity', units='m/s')
-        self.add_output(name='q', shape=(nn,), desc='dynamic pressure', units='N/m**2')
-        ar = np.arange(nn)
-        self.declare_partials(of='q', wrt='rho', rows=ar, cols=ar)
-        self.declare_partials(of='q', wrt='v', rows=ar, cols=ar)
-
-    def compute(self, inputs, outputs):
-        outputs['q'] = 0.5 * inputs['rho'] * inputs['v'] ** 2
-
-    def compute_partials(self, inputs, partials):
-        partials['q', 'rho'] = 0.5 * inputs['v'] ** 2
-        partials['q', 'v'] = inputs['rho'] * inputs['v']
-
-
-class LiftDragForceComp(om.ExplicitComponent):
-    """
-    Compute the aerodynamic forces (lift, drag) on the vehicle in the wind axis frame. Side force is assumed 0.
-    """
-
-    def initialize(self):
-        self.options.declare('num_nodes', types=int)
-
-    def setup(self):
-        nn = self.options['num_nodes']
-        self.add_input(name='CL', val=np.zeros(nn,), desc='lift coefficient', units=None)
-        self.add_input(name='CD', val=np.zeros(nn,), desc='drag coefficient', units=None)
-        self.add_input(name='q', val=np.zeros(nn,), desc='dynamic pressure', units='N/m**2')
-        self.add_input(name='S', shape=(1,), desc='aerodynamic reference area', units='m**2')
-        self.add_output(name='f_lift', shape=(nn,), desc='aerodynamic lift force', units='N')
-        self.add_output(name='f_drag', shape=(nn,), desc='aerodynamic drag force', units='N')
-
-        ar = np.arange(nn)
-        self.declare_partials(of='f_lift', wrt='q', rows=ar, cols=ar)
-        self.declare_partials(of='f_lift', wrt='S', rows=ar, cols=np.zeros(nn))
-        self.declare_partials(of='f_lift', wrt='CL', rows=ar, cols=ar)
-        self.declare_partials(of='f_drag', wrt='q', rows=ar, cols=ar)
-        self.declare_partials(of='f_drag', wrt='S', rows=ar, cols=np.zeros(nn))
-        self.declare_partials(of='f_drag', wrt='CD', rows=ar, cols=ar)
-
-    def compute(self, inputs, outputs):
-        q = inputs['q']
-        S = inputs['S']
-        CL = inputs['CL']
-        CD = inputs['CD']
-
-        qS = q * S
-        outputs['f_lift'] = qS * CL
-        outputs['f_drag'] = qS * CD
-
-    def compute_partials(self, inputs, partials):
-        q = inputs['q']
-        S = inputs['S']
-        CL = inputs['CL']
-        CD = inputs['CD']
-
-        qS = q * S
-        partials['f_lift', 'q'] = S * CL
-        partials['f_lift', 'S'] = q * CL
-        partials['f_lift', 'CL'] = qS
-        partials['f_drag', 'q'] = S * CD
-        partials['f_drag', 'S'] = q * CD
-        partials['f_drag', 'CD'] = qS
-
-
 class AeroForceOAS(om.Group):
     """
-    Computes the aerodynamic force in the wind frame by OAS aerostructural analysis
+    Computes the aerodynamic force in the wind frame.
+    It calls OpenAeroStruct aerostructural analysis at each node to compute CL and CD.
+    The OAS analyses can be parallelized. The `ParallelGroup` is added under `OASAnalyses` group.
     
     Parameters
     ----------
@@ -116,7 +47,7 @@ class AeroForceOAS(om.Group):
 
         # compute CL and CD by OpenAeroStruct
         self.add_subsystem(name='OAS',
-                           subsys=OASAnalysis(num_nodes=nn, OAS_surface=self.options['OAS_surface']),
+                           subsys=OASAnalyses(num_nodes=nn, OAS_surface=self.options['OAS_surface']),
                            promotes_inputs=['rho', 'v', 'alpha', 'm', 'theta'],
                            promotes_outputs=['CL', 'CD', 'S_ref'])
 
@@ -131,7 +62,7 @@ class AeroForceOAS(om.Group):
                            promotes_outputs=['f_lift', 'f_drag'])
         
 
-class OASAnalysis(om.Group):
+class OASAnalyses(om.Group):
     """
     Computes CL and CD of the wing using OAS aerostructural analysis.
     
@@ -282,6 +213,77 @@ class OASAnalysis(om.Group):
             point_name = "node_" + str(i)
             self.connect(point_name + ".wing_perf.failure", 'failure_history.scalar' + str(i))
             # END FOR
+
+
+class DynamicPressureComp(om.ExplicitComponent):
+    def initialize(self):
+        self.options.declare('num_nodes', types=int)
+
+    def setup(self):
+        nn = self.options['num_nodes']
+        self.add_input(name='rho', val=0.5 * np.ones(nn), desc='atmospheric density', units='kg/m**3')
+        self.add_input(name='v', shape=(nn,), desc='air-relative velocity', units='m/s')
+        self.add_output(name='q', shape=(nn,), desc='dynamic pressure', units='N/m**2')
+        ar = np.arange(nn)
+        self.declare_partials(of='q', wrt='rho', rows=ar, cols=ar)
+        self.declare_partials(of='q', wrt='v', rows=ar, cols=ar)
+
+    def compute(self, inputs, outputs):
+        outputs['q'] = 0.5 * inputs['rho'] * inputs['v'] ** 2
+
+    def compute_partials(self, inputs, partials):
+        partials['q', 'rho'] = 0.5 * inputs['v'] ** 2
+        partials['q', 'v'] = inputs['rho'] * inputs['v']
+
+
+class LiftDragForceComp(om.ExplicitComponent):
+    """
+    Compute the aerodynamic forces (lift, drag) on the vehicle in the wind axis frame. Side force is assumed 0.
+    """
+
+    def initialize(self):
+        self.options.declare('num_nodes', types=int)
+
+    def setup(self):
+        nn = self.options['num_nodes']
+        self.add_input(name='CL', val=np.zeros(nn,), desc='lift coefficient', units=None)
+        self.add_input(name='CD', val=np.zeros(nn,), desc='drag coefficient', units=None)
+        self.add_input(name='q', val=np.zeros(nn,), desc='dynamic pressure', units='N/m**2')
+        self.add_input(name='S', shape=(1,), desc='aerodynamic reference area', units='m**2')
+        self.add_output(name='f_lift', shape=(nn,), desc='aerodynamic lift force', units='N')
+        self.add_output(name='f_drag', shape=(nn,), desc='aerodynamic drag force', units='N')
+
+        ar = np.arange(nn)
+        self.declare_partials(of='f_lift', wrt='q', rows=ar, cols=ar)
+        self.declare_partials(of='f_lift', wrt='S', rows=ar, cols=np.zeros(nn))
+        self.declare_partials(of='f_lift', wrt='CL', rows=ar, cols=ar)
+        self.declare_partials(of='f_drag', wrt='q', rows=ar, cols=ar)
+        self.declare_partials(of='f_drag', wrt='S', rows=ar, cols=np.zeros(nn))
+        self.declare_partials(of='f_drag', wrt='CD', rows=ar, cols=ar)
+
+    def compute(self, inputs, outputs):
+        q = inputs['q']
+        S = inputs['S']
+        CL = inputs['CL']
+        CD = inputs['CD']
+
+        qS = q * S
+        outputs['f_lift'] = qS * CL
+        outputs['f_drag'] = qS * CD
+
+    def compute_partials(self, inputs, partials):
+        q = inputs['q']
+        S = inputs['S']
+        CL = inputs['CL']
+        CD = inputs['CD']
+
+        qS = q * S
+        partials['f_lift', 'q'] = S * CL
+        partials['f_lift', 'S'] = q * CL
+        partials['f_lift', 'CL'] = qS
+        partials['f_drag', 'q'] = S * CD
+        partials['f_drag', 'S'] = q * CD
+        partials['f_drag', 'CD'] = qS
 
 
 if __name__ == '__main__':
