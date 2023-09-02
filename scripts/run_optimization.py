@@ -9,6 +9,10 @@ For this problem setup, the total Jacobian structure is independent of the OAS m
 Therefore, to compute total coloring, I recommend to use a coarse OAS mesh.
 """
 
+# avoid numpy multithreading
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+
 import matplotlib.pyplot as plt
 import time as time_package
 
@@ -129,6 +133,7 @@ if __name__ == '__main__':
     t0 = time_package.time()
     prob.setup(check=False)
     t_setup = time_package.time() - t0
+    print('\n\n     Finished setup \n\n')
 
     # --- update solver settings for each OAS system ---
     for subsystem in prob.model.system_iter():
@@ -159,14 +164,17 @@ if __name__ == '__main__':
     t0 = time_package.time()
     prob.final_setup()
     t_final_setup = time_package.time() - t0
+    print('\n\n     Finished final_setup \n\n')
 
     t0 = time_package.time()
     prob.run_model()
     t_run_model = time_package.time() - t0
+    print('\n\n     Finished run_model \n\n')
 
     t0 = time_package.time()
     prob.compute_totals()
     t_compute_totals = time_package.time() - t0
+    print('\n\n     Finished compute_totals \n\n')
 
     om.n2(prob, show_browser=False)
 
