@@ -8,6 +8,8 @@ With a collocation formulation, nodes are parallel-in-time, therefore the ODE fu
 Note that the parallelization is only done at Dymos node level - each OAS analysis is not parallelized.
 The parallelization structure here is very similar to parallel multipoint analyses and derivative computation.
 
+The N2 diagram showing the problem structure is available in `n2.html`.
+
 ## Environment and dependencies
 - Ubuntu 20.04.6 LTS
 - CPU: 16 cores / 32 threads (AMD Ryzen 5950X, 3.4 GHz)
