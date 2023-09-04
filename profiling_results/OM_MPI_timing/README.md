@@ -1,0 +1,1 @@
+In `script` folder, run `mpirun -n 8 openmdao timing run_optimization.py`.
