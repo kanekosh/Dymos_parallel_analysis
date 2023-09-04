@@ -45,10 +45,11 @@ Timing is split into  `setup`, `final_setup`, `run_model`, and `compute_totals`.
 | 4               | 26.41   | 12.65         | 5.82        | 251.87           |
 | 8               | 29.73   | 15.04         | 3.69        | 233.61           |
 
-
-Speedup plot (of strong scaling) for `num_segments = 20`:
+\
+\
+**Speedup plot (of strong scaling) for `num_segments = 20`**
 ![Speed up (num_segments = 20)](https://github.com/kanekosh/Dymos_parallel_analysis/blob/main/scaling_study/figs/speedup_Nseg20.jpg?raw=true)
 
 \
-Speedup plot for `num_segments = 40`:
+**Speedup plot for `num_segments = 40`**
 ![Speed up (num_segments = 40)](https://github.com/kanekosh/Dymos_parallel_analysis/blob/main/scaling_study/figs/speedup_Nseg40.jpg?raw=true)

@@ -38,6 +38,8 @@ On my machine with 64 GB RAM, this ran out of memory, and the process was killed
 If your machine has more RAM, you may need to run it with a larger problem size to reproduce the issue.
 This can be done by increasing the OAS mesh size or dymos num_segments.
 
+A summary of memory usage scaling can be found [here](scaling_study/README.md).
+
 ## Ref: Python files
 All Python files are in `scripts`.
 - `run_optimization.py`: trajectory optimization runscript. Currently, this does not call `run_driver` for debugging purposes. Instead, it only calls `run_model` and `compute_totals` once after setting up the optimization problem. 
