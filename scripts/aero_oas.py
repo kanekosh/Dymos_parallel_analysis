@@ -8,6 +8,8 @@ from openaerostruct.integration.aerostruct_groups import AerostructGeometry, Aer
 
 from utils import Scalars2Vector, Vectors2Matrix, Arrays2Dto3D, Arrays3Dto4D
 
+from oas_subproblem import AeroStructPoint_SubProblemWrapper
+
 
 class AeroForceOAS(om.Group):
     """
@@ -73,6 +75,7 @@ class OASAnalyses(om.Group):
     def initialize(self):
         self.options.declare('num_nodes', types=int, desc='Number of nodes to be evaluated')
         self.options.declare('OAS_surface', types=dict, desc='Surface dict for OAS')
+        self.options.declare('use_subproblem', types=bool, default=False, desc='If True, use a OAS subproblem and wrapper instead of directly adding OAS as a subsystem')
 
     def setup(self):
         nn = self.options['num_nodes']
@@ -118,101 +121,197 @@ class OASAnalyses(om.Group):
         # -----------------------------
         # OAS aerostructural analyses
         # -----------------------------
+        if not self.options['use_subproblem']:
+            # --- directly add OAS as a subsystem ---
+            # The OpenMDAO problem has an access to all OAS internal variables
 
-        # add geometry
-        name = surface["name"]
-        aerostruct_group = AerostructGeometry(surface=surface)
-        self.add_subsystem(name, aerostruct_group)
+            # add geometry
+            name = surface["name"]
+            aerostruct_group = AerostructGeometry(surface=surface)
+            self.add_subsystem(name, aerostruct_group)
 
-        # parallelize OAS analysis at each node
-        parallel_group = self.add_subsystem('parallel', om.ParallelGroup(), promotes=['*'])
+            # parallelize OAS analysis at each node
+            parallel_group = self.add_subsystem('parallel', om.ParallelGroup(), promotes=['*'])
 
-        # add aerostruct point
-        for i in range(nn):
-            point_name = "node_" + str(i)
-            if i == 0:
-                # promote S_ref output for later use
-                promotes_outputs = [('coupled.' + name + '.S_ref', 'S_ref')]
-            else:
-                promotes_outputs = []
-            # END IF
-            promotes_inputs = ["Mach_number", "re", "empty_cg", "coupled.wing.element_mass", "load_factor", "beta", "CT", "speed_of_sound", "R"]
-            parallel_group.add_subsystem(point_name, AerostructPoint(surfaces=[surface]), promotes_inputs=promotes_inputs, promotes_outputs=promotes_outputs)
+            # add aerostruct point
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                if i == 0:
+                    # promote S_ref output for later use in dynamics model
+                    promotes_outputs = [('coupled.' + name + '.S_ref', 'S_ref')]
+                else:
+                    promotes_outputs = []
+                # END IF
+                promotes_inputs = ["Mach_number", "re", "empty_cg", "coupled.wing.element_mass", "load_factor", "beta", "CT", "speed_of_sound", "R"]
+                parallel_group.add_subsystem(point_name, AerostructPoint(surfaces=[surface]), promotes_inputs=promotes_inputs, promotes_outputs=promotes_outputs)
 
-            # connect m, rho, v and alpha (vector) to each point
-            self.connect('vector_in.rho_vector', point_name + '.rho', src_indices=i)
-            self.connect('vector_in.v_vector', point_name + '.v', src_indices=i)
-            self.connect('vector_in.alpha_vector', point_name + '.alpha', src_indices=i)
-            self.connect('vector_in.m_vector', point_name + '.W0', src_indices=i)
+                # connect m, rho, v and alpha (vector) to each point
+                self.connect('vector_in.rho_vector', point_name + '.rho', src_indices=i)
+                self.connect('vector_in.v_vector', point_name + '.v', src_indices=i)
+                self.connect('vector_in.alpha_vector', point_name + '.alpha', src_indices=i)
+                self.connect('vector_in.m_vector', point_name + '.W0', src_indices=i)
 
-            # connect load factor for structural loading. We ignore in-plane structural loading, only considers out-of-plane component of the gravity
-            self.connect('str_load_factor.load_factor', point_name + '.coupled.load_factor', src_indices=i)
+                # connect load factor for structural loading. We ignore in-plane structural loading, only considers out-of-plane component of the gravity
+                self.connect('str_load_factor.load_factor', point_name + '.coupled.load_factor', src_indices=i)
 
-            # Establish connections not taken care of internally
-            self.connect(name + ".local_stiff_transformed", point_name + ".coupled." + name + ".local_stiff_transformed")
-            self.connect(name + ".nodes", point_name + ".coupled." + name + ".nodes")
+                # Establish connections not taken care of internally
+                self.connect(name + ".local_stiff_transformed", point_name + ".coupled." + name + ".local_stiff_transformed")
+                self.connect(name + ".nodes", point_name + ".coupled." + name + ".nodes")
 
-            # Connect aerodynamic mesh to coupled group mesh
-            self.connect(name + ".mesh", point_name + ".coupled." + name + ".mesh")
+                # Connect aerodynamic mesh to coupled group mesh
+                self.connect(name + ".mesh", point_name + ".coupled." + name + ".mesh")
 
-            # Connect performance calculation variables
-            com_name = point_name + "." + name + "_perf"
-            self.connect(name + ".radius", com_name + ".radius")
-            self.connect(name + ".thickness", com_name + ".thickness")
-            self.connect(name + ".nodes", com_name + ".nodes")
-            self.connect(name + ".cg_location", point_name + "." + "total_perf." + name + "_cg_location")
-            self.connect(name + ".structural_mass", point_name + "." + "total_perf." + name + "_structural_mass")
-            self.connect(name + ".t_over_c", com_name + ".t_over_c")
-        # END FOR
-
-        # Output CL and CD vectors
-        self.add_subsystem('CL_vector', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'CL')])
-        self.add_subsystem('CD_vector', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'CD')])
-        # connect outputs of each aero point into the vectors
-        for i in range(nn):
-            point_name = "node_" + str(i)
-            self.connect(point_name + ".wing_perf.CL", 'CL_vector.scalar' + str(i))
-            self.connect(point_name + ".wing_perf.CD", 'CD_vector.scalar' + str(i))
-        # END FOR
-
-        # --- log time histories of other variables ---
-        # TODO: do these off-line after optimization to save runtime, as these are not used in optimization but only used for post-processing and plotting
-
-        # Cl distribution
-        ny = surface['mesh'].shape[1] - 1
-        self.add_subsystem('Cl_history', Vectors2Matrix(num_nodes=nn, len_vector=ny, units=None), promotes_outputs=[('matrix', 'Cl_dist_his')])   # output matrix: (nn, ny)
-        for i in range(nn):
-            point_name = "node_" + str(i)
-            self.connect(point_name + ".wing_perf.Cl", 'Cl_history.vector' + str(i))
-
-        # sectional force
-        mesh_shape = surface['mesh'].shape
-        sec_force_shape = (mesh_shape[0] - 1, mesh_shape[1] - 1, 3)
-        self.add_subsystem('sec_forces_history', Arrays3Dto4D(num_nodes=nn, input_shape=sec_force_shape, units='N'), promotes_outputs=[('array_out', 'sec_forces_his')])   # output matrix: (nn, nx-1, ny-1, 3)
-        for i in range(nn):
-            point_name = "node_" + str(i)
-            self.connect(point_name + ".coupled.aero_states.wing_sec_forces", 'sec_forces_history.array' + str(i))
-
-        # deformed mesh (aerostructural only)
-        mesh_shape = surface['mesh'].shape
-        self.add_subsystem('mesh_history', Arrays3Dto4D(num_nodes=nn, input_shape=mesh_shape, units='m'), promotes_outputs=[('array_out', 'mesh_his')])   # output matrix: (nn, nx, ny, 3)
-        for i in range(nn):
-            point_name = "node_" + str(i)
-            self.connect(point_name + ".coupled.wing.def_mesh", 'mesh_history.array' + str(i))
-
-        # von-mises stress (aerostructural only)
-        ny = mesh_shape[1]
-        self.add_subsystem('stress_history', Arrays2Dto3D(num_nodes=nn, input_shape=(ny - 1, 2), units='N/m**2'), promotes_outputs=[('array_out', 'stress_his')])   # output matrix: (nn, ny - 1, 2)
-        for i in range(nn):
-            point_name = "node_" + str(i)
-            self.connect(point_name + ".wing_perf.vonmises", 'stress_history.array' + str(i))
-
-        # failure metric (KS-aggregated, should be <=0)
-        self.add_subsystem('failure_history', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'failure_his')])
-        for i in range(nn):
-            point_name = "node_" + str(i)
-            self.connect(point_name + ".wing_perf.failure", 'failure_history.scalar' + str(i))
+                # Connect performance calculation variables
+                com_name = point_name + "." + name + "_perf"
+                self.connect(name + ".radius", com_name + ".radius")
+                self.connect(name + ".thickness", com_name + ".thickness")
+                self.connect(name + ".nodes", com_name + ".nodes")
+                self.connect(name + ".cg_location", point_name + "." + "total_perf." + name + "_cg_location")
+                self.connect(name + ".structural_mass", point_name + "." + "total_perf." + name + "_structural_mass")
+                self.connect(name + ".t_over_c", com_name + ".t_over_c")
             # END FOR
+
+            # Output CL and CD vectors
+            self.add_subsystem('CL_vector', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'CL')])
+            self.add_subsystem('CD_vector', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'CD')])
+            # connect outputs of each aero point into the vectors
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".wing_perf.CL", 'CL_vector.scalar' + str(i))
+                self.connect(point_name + ".wing_perf.CD", 'CD_vector.scalar' + str(i))
+            # END FOR
+
+            # --- log time histories of other variables ---
+            # TODO: do these off-line after optimization to save runtime, as these are not used in optimization but only used for post-processing and plotting
+
+            # Cl distribution
+            ny = surface['mesh'].shape[1] - 1
+            self.add_subsystem('Cl_history', Vectors2Matrix(num_nodes=nn, len_vector=ny, units=None), promotes_outputs=[('matrix', 'Cl_dist_his')])   # output matrix: (nn, ny)
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".wing_perf.Cl", 'Cl_history.vector' + str(i))
+
+            # sectional force
+            mesh_shape = surface['mesh'].shape
+            sec_force_shape = (mesh_shape[0] - 1, mesh_shape[1] - 1, 3)
+            self.add_subsystem('sec_forces_history', Arrays3Dto4D(num_nodes=nn, input_shape=sec_force_shape, units='N'), promotes_outputs=[('array_out', 'sec_forces_his')])   # output matrix: (nn, nx-1, ny-1, 3)
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".coupled.aero_states.wing_sec_forces", 'sec_forces_history.array' + str(i))
+
+            # deformed mesh (aerostructural only)
+            mesh_shape = surface['mesh'].shape
+            self.add_subsystem('mesh_history', Arrays3Dto4D(num_nodes=nn, input_shape=mesh_shape, units='m'), promotes_outputs=[('array_out', 'mesh_his')])   # output matrix: (nn, nx, ny, 3)
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".coupled.wing.def_mesh", 'mesh_history.array' + str(i))
+
+            # von-mises stress (aerostructural only)
+            ny = mesh_shape[1]
+            self.add_subsystem('stress_history', Arrays2Dto3D(num_nodes=nn, input_shape=(ny - 1, 2), units='N/m**2'), promotes_outputs=[('array_out', 'stress_his')])   # output matrix: (nn, ny - 1, 2)
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".wing_perf.vonmises", 'stress_history.array' + str(i))
+
+            # failure metric (KS-aggregated, should be <=0)
+            self.add_subsystem('failure_history', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'failure_his')])
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".wing_perf.failure", 'failure_history.scalar' + str(i))
+                # END FOR
+
+        else:
+            # --- use a subproblem and wrapper to call OAS ---
+            # OAS analysis at each node is treated as a black-box for top-level OM problem
+
+            # a dummy wing geometry component to connect twist/thickness cp. Inputs of this component will be connected from Dymos traj parameters, and output will be connected to each OAS wrappers.
+            n_cp_twist = len(surface['twist_cp'])
+            n_cp_thickness = len(surface['thickness_cp'])
+            wing_desvar_comp = om.ExecComp(['twist_cp_out = twist_cp', 'thickness_cp_out = thickness_cp'],
+                                           twist_cp_out={'shape': (n_cp_twist), 'units': 'deg'},
+                                           twist_cp={'shape': (n_cp_twist), 'units': 'deg'},
+                                           thickness_cp_out={'shape': (n_cp_thickness), 'units': 'm'},
+                                           thickness_cp={'shape': (n_cp_thickness), 'units': 'm'},
+                                           has_diag_partials=True)
+            self.add_subsystem('wing', wing_desvar_comp)
+
+            # parallelize OAS analysis at each node
+            parallel_group = self.add_subsystem('parallel_wrap', om.ParallelGroup(), promotes=['*'])
+
+            # add aerostruct point
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                if i == 0:
+                    # promote S_ref output for later use
+                    promotes_outputs = ['S_ref']
+                else:
+                    promotes_outputs = []
+                # END IF
+                promotes_inputs = ["Mach_number", "re"]
+                parallel_group.add_subsystem(point_name, AeroStructPoint_SubProblemWrapper(surface=surface), promotes_inputs=promotes_inputs, promotes_outputs=promotes_outputs)
+
+                # connect m, rho, v and alpha (vector) to each point
+                self.connect('vector_in.rho_vector', point_name + '.rho', src_indices=i)
+                self.connect('vector_in.v_vector', point_name + '.v', src_indices=i)
+                self.connect('vector_in.alpha_vector', point_name + '.alpha', src_indices=i)
+                self.connect('vector_in.m_vector', point_name + '.W0', src_indices=i)
+
+                # connect load factor for structural loading. We ignore in-plane structural loading, only considers out-of-plane component of the gravity
+                self.connect('str_load_factor.load_factor', point_name + '.load_factor', src_indices=i)
+
+                # connect wing design
+                self.connect('wing.twist_cp_out', point_name + '.twist_cp')
+                self.connect('wing.thickness_cp_out', point_name + '.thickness_cp')
+            # END FOR
+
+            # Output CL and CD vectors
+            self.add_subsystem('CL_vector', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'CL')])
+            self.add_subsystem('CD_vector', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'CD')])
+            # connect outputs of each aero point into the vectors
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".CL", 'CL_vector.scalar' + str(i))
+                self.connect(point_name + ".CD", 'CD_vector.scalar' + str(i))
+            # END FOR
+
+            # --- log time histories of other variables ---
+            # TODO: do these off-line after optimization to save runtime, as these are not used in optimization but only used for post-processing and plotting
+
+            # Cl distribution
+            ny = surface['mesh'].shape[1] - 1
+            self.add_subsystem('Cl_history', Vectors2Matrix(num_nodes=nn, len_vector=ny, units=None), promotes_outputs=[('matrix', 'Cl_dist_his')])   # output matrix: (nn, ny)
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".Cl", 'Cl_history.vector' + str(i))
+
+            # sectional force
+            mesh_shape = surface['mesh'].shape
+            sec_force_shape = (mesh_shape[0] - 1, mesh_shape[1] - 1, 3)
+            self.add_subsystem('sec_forces_history', Arrays3Dto4D(num_nodes=nn, input_shape=sec_force_shape, units='N'), promotes_outputs=[('array_out', 'sec_forces_his')])   # output matrix: (nn, nx-1, ny-1, 3)
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".sec_forces", 'sec_forces_history.array' + str(i))
+
+            # deformed mesh (aerostructural only)
+            mesh_shape = surface['mesh'].shape
+            self.add_subsystem('mesh_history', Arrays3Dto4D(num_nodes=nn, input_shape=mesh_shape, units='m'), promotes_outputs=[('array_out', 'mesh_his')])   # output matrix: (nn, nx, ny, 3)
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".def_mesh", 'mesh_history.array' + str(i))
+
+            # von-mises stress (aerostructural only)
+            ny = mesh_shape[1]
+            self.add_subsystem('stress_history', Arrays2Dto3D(num_nodes=nn, input_shape=(ny - 1, 2), units='N/m**2'), promotes_outputs=[('array_out', 'stress_his')])   # output matrix: (nn, ny - 1, 2)
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".vonmises", 'stress_history.array' + str(i))
+
+            # failure metric (KS-aggregated, should be <=0)
+            self.add_subsystem('failure_history', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'failure_his')])
+            for i in range(nn):
+                point_name = "node_" + str(i)
+                self.connect(point_name + ".failure", 'failure_history.scalar' + str(i))
+                # END FOR
 
 
 class DynamicPressureComp(om.ExplicitComponent):

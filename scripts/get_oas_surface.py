@@ -28,6 +28,7 @@ def get_OAS_surface(wing_area, span, num_y=15, num_x=5):
     root_chord = 2 * wing_area / span / (1 + taper_ratio)
 
     n_twist_points = 5
+    n_thickness_points = 5
 
     # Create a dictionary to store options about the surface
     mesh_dict = {"num_y": num_y, "num_x": num_x, "wing_type": "rect", "symmetry": True, "span": span, "root_chord": root_chord}
@@ -46,7 +47,7 @@ def get_OAS_surface(wing_area, span, num_y=15, num_x=5):
         # can be 'wetted' or 'projected'
         "fem_model_type": "tube",
         # NOTE: more flexible structure + sweep will increase the number of NLBGS iterations (which is good for scaling)
-        "thickness_cp": np.array([0.001]),
+        "thickness_cp": 0.001 * np.ones(n_thickness_points),  # [m]
         "radius_cp": np.array([0.004]),
         "twist_cp": np.zeros(n_twist_points),
         "mesh": mesh,
@@ -81,4 +82,4 @@ def get_OAS_surface(wing_area, span, num_y=15, num_x=5):
         "exact_failure_constraint": False,  # if false, use KS function
     }
 
-    return surface, wing_area
+    return surface
