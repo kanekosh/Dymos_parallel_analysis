@@ -94,6 +94,7 @@ NOTE: for nested approach, `final_setup` of the subproblem is called within `set
 
 
 ## Wall time comparison of 1 iteration of optimization
+TODO: update
 This timing is done in series.
 I measured the wall time for SNOPT with only 1 iteration (analysis + derivatives computation).
 This study reflects the total Jacobian coloring for derivatives computation.
@@ -130,13 +131,20 @@ NOTE: total coloring -> 11 FWD solves
 
 
 
-### NOTE: with wing design variables
-With wing twist and thickness variables (10 vars), total coloring yields 27 FWD solves.
+### Nested vs. Monolithic - in series
+With wing twist and thickness variables (10 vars), total coloring yields 25 FWD solves.
 
-Monolithic:
-- User Objective Time :      6.4559
-- User Sensitivity Time :    40.9500
+NOTE: the followings are run on Mac - above scalability study is on workstation. That's why the time is different.
 
-Nested: 
-- User Objective Time :       6.4304
-- User Sensitivity Time :    10.3474
+**Table: fixed-design trajectory optimization**
+|                 | Analysis | Derivatives | 
+| :-------------: | -------: | ----------: |
+| Monolithic      | 6.26     | 13.27       |
+| Nested          | 6.50     | 8.88        |
+
+
+**Table: wing design & trajectory optimization**
+|                 | Analysis | Derivatives | 
+| :-------------: | -------: | ----------: |
+| Monolithic      | 6.66     | 40.95       |
+| Nested          | 6.46     | 9.15        |
