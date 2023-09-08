@@ -146,5 +146,5 @@ NOTE: the followings are run on Mac - above scalability study is on workstation.
 **Table: wing design & trajectory optimization**
 |                 | Analysis | Derivatives | 
 | :-------------: | -------: | ----------: |
-| Monolithic      | 6.66     | 40.95       |
-| Nested          | 6.46     | 9.15        |
+| Monolithic      | 6.46     | 40.95       |
+| Nested          | 6.66     | 9.15        |
