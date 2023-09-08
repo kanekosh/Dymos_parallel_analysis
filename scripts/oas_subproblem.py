@@ -10,6 +10,8 @@ from openaerostruct.integration.aerostruct_groups import AerostructGeometry, Aer
 
 # TODO: use om.SubmodelComp and refactor. But can I set mode ('rev' or 'fwd') for the submodelcomp?
 
+# TODO: currently OAS outputs are CL, CD, and S_ref. More efficient to directly give L and D to upper dynamics model for OAS-level adjoint.
+
 class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
     """
     Wrapper of a (single-point) OAS analysis.
@@ -75,10 +77,8 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         self.add_input("Mach_number", val=0.044)
         self.add_input("re", val=1.0e6, units="1/m")
         # wing design variables
-        num_cp_twist = len(surface['twist_cp'])
-        num_cp_thickness = len(surface['thickness_cp'])
-        self.add_input('twist_cp', val=np.zeros((num_cp_twist)), units='deg')
-        self.add_input('thickness_cp', val=np.ones((num_cp_thickness)) * 0.01, units='m')
+        self.add_input('twist_cp', val=surface["twist_cp"], units='deg')
+        self.add_input('thickness_cp', val=surface["thickness_cp"], units='m')
 
         # --- outputs ---
         # CL and CD used by dynamics model
@@ -106,7 +106,7 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         # TODO: if I change problem, declare the additional partials here.
         # - declare the partial of failure to include failure constraint
         # - declare the partials w.r.t. load factor to include bank angle as control
-        outputs = ['CL', 'CD']
+        outputs = ['CL', 'CD', 'S_ref']
         inputs = ['v', 'alpha', 'W0']
         if self.options['optimize_design']:
             inputs += ['twist_cp', 'thickness_cp']
@@ -190,9 +190,9 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         self._prob_OAS.setup(check=False, mode='rev')   # set 'rev' to perform adjoint in compute_totals. Need to maually specify here, because I don't declare desvar/functions, thus OM never knows.
 
         # solver settings
-        prob.model.AS_point.coupled.nonlinear_solver.options['iprint'] = 1   # turn off solver print
+        prob.model.AS_point.coupled.nonlinear_solver.options['iprint'] = 0   # turn off solver print
         # PETSc linear solver for derivatives
-        prob.model.AS_point.coupled.linear_solver = om.PETScKrylov(assemble_jac=False, iprint=2, err_on_non_converge=True)
+        prob.model.AS_point.coupled.linear_solver = om.PETScKrylov(assemble_jac=False, iprint=0, err_on_non_converge=True)
         prob.model.AS_point.coupled.linear_solver.precon = om.LinearRunOnce(iprint=-1)
 
         # call final_setup here to eliminate it from run_model timing
@@ -238,7 +238,7 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         # (analysis restarts from the previously-converged point and converges in 1 iter, so it's probably not a big deal)
         self.compute(inputs, {})
 
-        of = [point_name + ".wing_perf.CL", point_name + ".wing_perf.CD"]
+        of = [point_name + ".wing_perf.CL", point_name + ".wing_perf.CD", point_name + ".coupled.wing.S_ref"]
         wrt = ['v', 'alpha', 'W0']
         if self.options['optimize_design']:
             wrt += ['wing_design_vars.twist_cp', 'wing_design_vars.thickness_cp']
@@ -250,11 +250,16 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         partials['CD', 'v'] = derivs[(point_name + ".wing_perf.CD", 'v')]
         partials['CD', 'alpha'] = derivs[(point_name + ".wing_perf.CD", 'alpha')]
         partials['CD', 'W0'] = derivs[(point_name + ".wing_perf.CD", 'W0')]
+        partials['S_ref', 'v'] = derivs[(point_name + ".coupled.wing.S_ref", 'v')]
+        partials['S_ref', 'alpha'] = derivs[(point_name + ".coupled.wing.S_ref", 'alpha')]
+        partials['S_ref', 'W0'] = derivs[(point_name + ".coupled.wing.S_ref", 'W0')]
         if self.options['optimize_design']:
             partials['CL', 'twist_cp'] = derivs[(point_name + ".wing_perf.CL", 'wing_design_vars.twist_cp')]
             partials['CL', 'thickness_cp'] = derivs[(point_name + ".wing_perf.CL", 'wing_design_vars.thickness_cp')]
             partials['CD', 'twist_cp'] = derivs[(point_name + ".wing_perf.CD", 'wing_design_vars.twist_cp')]
             partials['CD', 'thickness_cp'] = derivs[(point_name + ".wing_perf.CD", 'wing_design_vars.thickness_cp')]
+            partials['S_ref', 'twist_cp'] = derivs[(point_name + ".coupled.wing.S_ref", 'wing_design_vars.twist_cp')]
+            partials['S_ref', 'thickness_cp'] = derivs[(point_name + ".coupled.wing.S_ref", 'wing_design_vars.thickness_cp')]
 
 
 if __name__ == '__main__':
