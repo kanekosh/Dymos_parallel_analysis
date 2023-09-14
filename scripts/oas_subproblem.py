@@ -10,7 +10,6 @@ from openaerostruct.integration.aerostruct_groups import AerostructGeometry, Aer
 
 # TODO: use om.SubmodelComp and refactor. But can I set mode ('rev' or 'fwd') for the submodelcomp?
 
-# TODO: currently OAS outputs are CL, CD, and S_ref. More efficient to directly give L and D to upper dynamics model for OAS-level adjoint.
 
 class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
     """
@@ -42,6 +41,10 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
     
     Returns
     -------
+    Lift : float
+        lift, N
+    Drag : float
+        drag, N
     CL : float
         lift coefficient
     CD : float
@@ -81,7 +84,11 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         self.add_input('thickness_cp', val=surface["thickness_cp"], units='m')
 
         # --- outputs ---
-        # CL and CD used by dynamics model
+        # Lift and drag are used by dynamics model
+        self.add_output('Lift', shape=(1,), units='N')
+        self.add_output('Drag', shape=(1,), units='N')
+
+        # the following outputs are for logging only (hence no derivatives)
         self.add_output('CL', shape=(1,))
         self.add_output('CD', shape=(1,))
         # wing reference area
@@ -106,7 +113,7 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         # TODO: if I change problem, declare the additional partials here.
         # - declare the partial of failure to include failure constraint
         # - declare the partials w.r.t. load factor to include bank angle as control
-        outputs = ['CL', 'CD', 'S_ref']
+        outputs = ['Lift', 'Drag']
         inputs = ['v', 'alpha', 'W0']
         if self.options['optimize_design']:
             inputs += ['twist_cp', 'thickness_cp']
@@ -220,6 +227,8 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         ### om.n2(self._prob_OAS, outfile='n2_OAS_subproblem.html', show_browser=False)
 
         # get outputs from the model
+        outputs['Lift'] = self._prob_OAS.get_val(point_name + ".total_perf.L", units='N')
+        outputs['Drag'] = self._prob_OAS.get_val(point_name + ".total_perf.D", units='N')
         outputs['CL'] = self._prob_OAS.get_val(point_name + ".wing_perf.CL")
         outputs['CD'] = self._prob_OAS.get_val(point_name + ".wing_perf.CD")
 
@@ -238,28 +247,23 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         # (analysis restarts from the previously-converged point and converges in 1 iter, so it's probably not a big deal)
         self.compute(inputs, {})
 
-        of = [point_name + ".wing_perf.CL", point_name + ".wing_perf.CD", point_name + ".coupled.wing.S_ref"]
+        of = [point_name + ".total_perf.L", point_name + ".total_perf.D"]
         wrt = ['v', 'alpha', 'W0']
         if self.options['optimize_design']:
             wrt += ['wing_design_vars.twist_cp', 'wing_design_vars.thickness_cp']
         derivs = self._prob_OAS.compute_totals(of, wrt)
 
-        partials['CL', 'v'] = derivs[(point_name + ".wing_perf.CL", 'v')]
-        partials['CL', 'alpha'] = derivs[(point_name + ".wing_perf.CL", 'alpha')]
-        partials['CL', 'W0'] = derivs[(point_name + ".wing_perf.CL", 'W0')]
-        partials['CD', 'v'] = derivs[(point_name + ".wing_perf.CD", 'v')]
-        partials['CD', 'alpha'] = derivs[(point_name + ".wing_perf.CD", 'alpha')]
-        partials['CD', 'W0'] = derivs[(point_name + ".wing_perf.CD", 'W0')]
-        partials['S_ref', 'v'] = derivs[(point_name + ".coupled.wing.S_ref", 'v')]
-        partials['S_ref', 'alpha'] = derivs[(point_name + ".coupled.wing.S_ref", 'alpha')]
-        partials['S_ref', 'W0'] = derivs[(point_name + ".coupled.wing.S_ref", 'W0')]
+        partials['Lift', 'v'] = derivs[(point_name + ".total_perf.L", 'v')]
+        partials['Lift', 'alpha'] = derivs[(point_name + ".total_perf.L", 'alpha')]
+        partials['Lift', 'W0'] = derivs[(point_name + ".total_perf.L", 'W0')]
+        partials['Drag', 'v'] = derivs[(point_name + ".total_perf.D", 'v')]
+        partials['Drag', 'alpha'] = derivs[(point_name + ".total_perf.D", 'alpha')]
+        partials['Drag', 'W0'] = derivs[(point_name + ".total_perf.D", 'W0')]
         if self.options['optimize_design']:
-            partials['CL', 'twist_cp'] = derivs[(point_name + ".wing_perf.CL", 'wing_design_vars.twist_cp')]
-            partials['CL', 'thickness_cp'] = derivs[(point_name + ".wing_perf.CL", 'wing_design_vars.thickness_cp')]
-            partials['CD', 'twist_cp'] = derivs[(point_name + ".wing_perf.CD", 'wing_design_vars.twist_cp')]
-            partials['CD', 'thickness_cp'] = derivs[(point_name + ".wing_perf.CD", 'wing_design_vars.thickness_cp')]
-            partials['S_ref', 'twist_cp'] = derivs[(point_name + ".coupled.wing.S_ref", 'wing_design_vars.twist_cp')]
-            partials['S_ref', 'thickness_cp'] = derivs[(point_name + ".coupled.wing.S_ref", 'wing_design_vars.thickness_cp')]
+            partials['Lift', 'twist_cp'] = derivs[(point_name + ".total_perf.L", 'wing_design_vars.twist_cp')]
+            partials['Lift', 'thickness_cp'] = derivs[(point_name + ".total_perf.L", 'wing_design_vars.thickness_cp')]
+            partials['Drag', 'twist_cp'] = derivs[(point_name + ".total_perf.D", 'wing_design_vars.twist_cp')]
+            partials['Drag', 'thickness_cp'] = derivs[(point_name + ".total_perf.D", 'wing_design_vars.thickness_cp')]
 
 
 if __name__ == '__main__':

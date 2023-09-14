@@ -18,7 +18,6 @@ class Aircraft2DODE(om.Group):
         controls = (alpha, theta, thrust)
             alpha  = angle of attack
             thrust = thrust
-        Sref = wing ref area (fixed parameter). Not necessary if using OAS
 
     Outputs:
         state rate of change (fd.x_dot, fd.y_dot, fd.v_dot, fd.z_dot, fd.gam_dot, fd.chi_dot)
@@ -35,7 +34,7 @@ class Aircraft2DODE(om.Group):
         # --- aerodynamic model ---
         # input: m, v, alpha, theta, S_ref
         # outputs: f_lift, f_drag
-        self.add_subsystem(name='aero', subsys=AeroForceOAS(num_nodes=nn, OAS_surface=self.options['OAS_surface']), promotes_inputs=['m', 'v', 'alpha', 'S_ref'])
+        self.add_subsystem(name='aero', subsys=AeroForceOAS(num_nodes=nn, OAS_surface=self.options['OAS_surface']), promotes_inputs=['m', 'v', 'alpha'])
         self.set_input_defaults('aero.theta', np.zeros(nn), units='deg')   # set 0 deg bank angle
 
         # --- flight dynamics ---

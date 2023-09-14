@@ -51,25 +51,15 @@ class AeroForceOAS(om.Group):
         self.add_subsystem(name='OAS',
                            subsys=OASAnalyses(num_nodes=nn, OAS_surface=self.options['OAS_surface']),
                            promotes_inputs=['rho', 'v', 'alpha', 'm', 'theta'],
-                           promotes_outputs=['CL', 'CD', 'S_ref'])
+                           promotes_outputs=[('Lift', 'f_lift'), ('Drag', 'f_drag')])
 
-        self.add_subsystem(name='q_comp',
-                           subsys=DynamicPressureComp(num_nodes=nn),
-                           promotes_inputs=['rho', 'v'],
-                           promotes_outputs=['q'])
-
-        self.add_subsystem(name='lift_drag_force_comp',
-                           subsys=LiftDragForceComp(num_nodes=nn),
-                           promotes_inputs=['CL', 'CD', 'q', ('S', 'S_ref')],
-                           promotes_outputs=['f_lift', 'f_drag'])
-        
 
 class OASAnalyses(om.Group):
     """
     Computes CL and CD of the wing using OAS aerostructural analysis.
     
     Inputs: v, alpha, theta, rho, m (vectors)
-    Outputs: CL, CD (vectors)
+    Outputs: Lift, Drag (vectors)
     """
 
     def initialize(self):
@@ -171,14 +161,18 @@ class OASAnalyses(om.Group):
                 self.connect(name + ".t_over_c", com_name + ".t_over_c")
             # END FOR
 
-            # Output CL and CD vectors
+            # Output Lift, Drag, CL, and CD vectors
             self.add_subsystem('CL_vector', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'CL')])
             self.add_subsystem('CD_vector', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'CD')])
+            self.add_subsystem('Lift_vector', Scalars2Vector(num_nodes=nn, units='N'), promotes_outputs=[('vector', 'Lift')])
+            self.add_subsystem('Drag_vector', Scalars2Vector(num_nodes=nn, units='N'), promotes_outputs=[('vector', 'Drag')])
             # connect outputs of each aero point into the vectors
             for i in range(nn):
                 point_name = "node_" + str(i)
                 self.connect(point_name + ".wing_perf.CL", 'CL_vector.scalar' + str(i))
                 self.connect(point_name + ".wing_perf.CD", 'CD_vector.scalar' + str(i))
+                self.connect(point_name + ".total_perf.L", 'Lift_vector.scalar' + str(i))
+                self.connect(point_name + ".total_perf.D", 'Drag_vector.scalar' + str(i))
             # END FOR
 
             # --- log time histories of other variables ---
@@ -264,14 +258,20 @@ class OASAnalyses(om.Group):
                 self.connect('wing.thickness_cp_out', point_name + '.thickness_cp')
             # END FOR
 
-            # Output CL and CD vectors
+            # Output Lift, Drag, CL and CD vectors
+            # Lift and drag will be used in dynamics (therefore, derivatives of lift and drag are computed in subproblem)
+            # CL and CD are used for just logging, therefore, derivatives are not computed in subproblem
             self.add_subsystem('CL_vector', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'CL')])
             self.add_subsystem('CD_vector', Scalars2Vector(num_nodes=nn, units=None), promotes_outputs=[('vector', 'CD')])
+            self.add_subsystem('Lift_vector', Scalars2Vector(num_nodes=nn, units='N'), promotes_outputs=[('vector', 'Lift')])
+            self.add_subsystem('Drag_vector', Scalars2Vector(num_nodes=nn, units='N'), promotes_outputs=[('vector', 'Drag')])
             # connect outputs of each aero point into the vectors
             for i in range(nn):
                 point_name = "node_" + str(i)
                 self.connect(point_name + ".CL", 'CL_vector.scalar' + str(i))
                 self.connect(point_name + ".CD", 'CD_vector.scalar' + str(i))
+                self.connect(point_name + ".Lift", 'Lift_vector.scalar' + str(i))
+                self.connect(point_name + ".Drag", 'Drag_vector.scalar' + str(i))
             # END FOR
 
             # --- log time histories of other variables ---

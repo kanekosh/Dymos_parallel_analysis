@@ -15,6 +15,7 @@ os.environ['OPENBLAS_NUM_THREADS'] = '1'
 
 import matplotlib.pyplot as plt
 import time as time_package
+import pickle
 
 from mpi4py import MPI
 import openmdao.api as om
@@ -27,10 +28,10 @@ from get_oas_surface import get_OAS_surface
 if __name__ == '__main__':
 
     # --- total coloring file ---
-    # coloring_file = 'coloring_files/total_coloring_Radau10.pkl'
+    # coloring_file = 'coloring_files/total_coloring_Radau10_no_design_fwd.pkl'
     # coloring_file = 'coloring_files/total_coloring_Radau20.pkl'
-    coloring_file = 'coloring_files/total_coloring_Radau40.pkl'
-    # coloring_file = None
+    # coloring_file = 'coloring_files/total_coloring_Radau40.pkl'
+    coloring_file = None
     
     # --- mission/aircraft settings ---
     # reference cruise speed
@@ -49,8 +50,8 @@ if __name__ == '__main__':
     thrust_UB = mass * 9.81 * 0.15
 
     # --- setup OAS surface ---
-    surface, Sref = get_OAS_surface(Sref, span, num_y=21, num_x=5)
-    ### surface, Sref = get_OAS_surface(Sref, span, num_y=5, num_x=2)   # use coarse mesh when computing total coloring. Also, for this mesh size, DirectSolver at top-level is much faster than PETSc linear solver.
+    ### surface = get_OAS_surface(Sref, span, num_y=21, num_x=5)
+    surface = get_OAS_surface(Sref, span, num_y=5, num_x=2)   # use coarse mesh when computing total coloring. Also, for this mesh size, DirectSolver at top-level is much faster than PETSc linear solver.
 
     # --------------------------
     # Setup OpenMDAO problem
@@ -63,15 +64,15 @@ if __name__ == '__main__':
     design_var_comp.add_output("thickness_cp", val=surface["thickness_cp"], units='m')
     prob.model.add_subsystem('wing_design_vars', design_var_comp)
     # simultaneously optimize wing design and trajectory
-    ### twist0 = surface['twist_cp']
-    ### prob.model.add_design_var('wing_design_vars.twist_cp', lower=twist0 - 5, upper=twist0 + 5, ref=10, units='deg')
-    ### prob.model.add_design_var('wing_design_vars.thickness_cp', lower=0.001, upper=0.004, ref=0.001, units='m')
+    twist0 = surface['twist_cp']
+    prob.model.add_design_var('wing_design_vars.twist_cp', lower=twist0 - 5, upper=twist0 + 5, ref=10, units='deg')
+    prob.model.add_design_var('wing_design_vars.thickness_cp', lower=0.001, upper=0.004, ref=0.001, units='m')
 
     # --- setup trajectory ---
     traj = dm.Trajectory()
     prob.model.add_subsystem('traj', traj)
 
-    tx = dm.Radau(num_segments=40, order=3, solve_segments=False, compressed=True)
+    tx = dm.Radau(num_segments=10, order=3, solve_segments=False, compressed=True)
     ### tx = dm.Radau(num_segments=20, order=3, solve_segments=False, compressed=True)
     nn = tx.grid_data.num_nodes
 
@@ -83,7 +84,7 @@ if __name__ == '__main__':
     phase1.add_state('y', fix_initial=True, fix_final=True, rate_source='fd.y_dot', units='m', ref=1000.)
     phase1.add_state('v', fix_initial=True, fix_final=True, rate_source='fd.v_dot', targets='v', lower=vmin, upper=vmax, units='m/s', ref=30.)
     phase1.add_state('energy', fix_initial=True, fix_final=False, rate_source='power', units='W*s', ref=100.)
-    phase1.add_control('alpha', targets='alpha', units='deg', lower=0.1, upper=10., ref=10., rate_continuity=True)  # angle of attack
+    phase1.add_control('alpha', fix_initial=True, fix_final=True, targets='alpha', units='deg', lower=0.1, upper=10., ref=10., rate_continuity=True)  # angle of attack
     phase1.add_control('thrust', targets='thrust', units='N', lower=thrust_LB, upper=thrust_UB, ref=thrust_ref, rate_continuity=True)
     phase1.add_parameter('m', val=mass, units='kg', static_target=False)
     phase1.add_parameter('Sref', val=Sref, units='m**2', static_target=True)
@@ -113,12 +114,12 @@ if __name__ == '__main__':
     # --- optimizer ---
     prob.driver = om.pyOptSparseDriver()
     prob.driver.options['optimizer'] = 'SNOPT'
-    prob.driver.options['print_results'] = False
+    prob.driver.options['print_results'] = True
     prob.driver.opt_settings['Iterations limit'] = 30000
-    prob.driver.opt_settings['Major iterations limit'] = 1000
+    prob.driver.opt_settings['Major iterations limit'] = 0
     prob.driver.opt_settings['Major feasibility tolerance'] = 1e-6
     prob.driver.opt_settings['Major optimality tolerance'] = 1e-5
-    prob.driver.opt_settings['Verify level'] = -1  # do not check gradient
+    prob.driver.opt_settings['Verify level'] = -1   # do not check gradient
     prob.driver.opt_settings['Function precision'] = 1e-10
     prob.driver.opt_settings['Hessian full memory'] = 1
     prob.driver.opt_settings['Hessian frequency'] = 100
@@ -129,9 +130,10 @@ if __name__ == '__main__':
         prob.driver.use_fixed_coloring(coloring_file)
 
     ### prob.model.linear_solver = om.DirectSolver()   # only for serial
+    # TODO: for nested approach, I should assemble Jacobian at the top-level. But that doesn't work with ParallelComp. Need to parallelize within subproblem's compute and compute_partials?
 
     t0 = time_package.time()
-    prob.setup(check=False)
+    prob.setup(check=False, mode='fwd')
     t_setup = time_package.time() - t0
     print('\n\n     Finished setup \n\n')
 
@@ -143,6 +145,9 @@ if __name__ == '__main__':
             # linear solver for derivatives
             subsystem.linear_solver = om.PETScKrylov(assemble_jac=False, iprint=0, err_on_non_converge=True)
             subsystem.linear_solver.precon = om.LinearRunOnce(iprint=-1)
+
+    # NOTE: Don't add LiearBlockJac! this makes (serial) compute_totals 2-3x slower. Also this fails SNOPT's deriv check
+    ### traj.phases.phase1.rhs_all.aero.OAS.parallel.linear_solver = om.LinearBlockJac(iprint=2, atol=1e-10, err_on_non_converge=True)
 
     # -------------------------
     # set initial guess
@@ -172,11 +177,12 @@ if __name__ == '__main__':
     print('\n\n     Finished run_model \n\n')
 
     t0 = time_package.time()
-    prob.compute_totals()
+    total_derivs = prob.compute_totals()
     t_compute_totals = time_package.time() - t0
     print('\n\n     Finished compute_totals \n\n')
 
-    om.n2(prob, show_browser=False)
+    ### prob.run_driver()  # NOTE: too small structural thickness will cause failure.
+    om.n2(prob, outfile="n2_toplevel.html", show_browser=False)
 
     if MPI.COMM_WORLD.rank == 0:
         print('num procs:', MPI.COMM_WORLD.size)
@@ -193,20 +199,25 @@ if __name__ == '__main__':
         # -----
         # plot
         # -----
-        t = prob.get_val('traj.phase1.timeseries.time', units='s')
-        v = prob.get_val('traj.phase1.timeseries.states:v', units='m/s')
-        alpha = prob.get_val('traj.phase1.timeseries.controls:alpha', units='deg')
-        thrust = prob.get_val('traj.phase1.timeseries.controls:thrust', units='N')
-        energy = prob.get_val('traj.phase1.timeseries.states:energy', units='W*s')
+        # t = prob.get_val('traj.phase1.timeseries.time', units='s')
+        # v = prob.get_val('traj.phase1.timeseries.states:v', units='m/s')
+        # alpha = prob.get_val('traj.phase1.timeseries.controls:alpha', units='deg')
+        # thrust = prob.get_val('traj.phase1.timeseries.controls:thrust', units='N')
+        # energy = prob.get_val('traj.phase1.timeseries.states:energy', units='W*s')
 
-        fig, ax = plt.subplots(4, 1, figsize=(10, 8))
-        ax[0].plot(t, v)
-        ax[0].set_ylabel('v (m/s)')
-        ax[1].plot(t, energy)
-        ax[1].set_ylabel('energy (Ws)')
-        ax[2].plot(t, alpha)
-        ax[2].set_ylabel('alpha (deg)')
-        ax[3].plot(t, thrust)
-        ax[3].set_ylabel('thrust (N)')
-        ax[3].set_xlabel('time (s)')
-        plt.show()
+        # fig, ax = plt.subplots(4, 1, figsize=(10, 8))
+        # ax[0].plot(t, v)
+        # ax[0].set_ylabel('v (m/s)')
+        # ax[1].plot(t, energy)
+        # ax[1].set_ylabel('energy (Ws)')
+        # ax[2].plot(t, alpha)
+        # ax[2].set_ylabel('alpha (deg)')
+        # ax[3].plot(t, thrust)
+        # ax[3].set_ylabel('thrust (N)')
+        # ax[3].set_xlabel('time (s)')
+        # plt.show()
+
+        # save total derivatives
+        with open('total_derivs.pkl', 'wb') as f:
+            pickle.dump(total_derivs, f)
+    
