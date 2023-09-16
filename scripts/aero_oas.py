@@ -9,6 +9,7 @@ from openaerostruct.integration.aerostruct_groups import AerostructGeometry, Aer
 from utils import Scalars2Vector, Vectors2Matrix, Arrays2Dto3D, Arrays3Dto4D
 
 from oas_subproblem import AeroStructPoint_SubProblemWrapper
+from oas_subproblem_eff import AeroStructPoint_SubProblemWrapper as AeroStructPoint_SubProblemWrapper_NoGeometry
 
 
 class AeroForceOAS(om.Group):
@@ -65,8 +66,8 @@ class OASAnalyses(om.Group):
     def initialize(self):
         self.options.declare('num_nodes', types=int, desc='Number of nodes to be evaluated')
         self.options.declare('OAS_surface', types=dict, desc='Surface dict for OAS')
-        self.options.declare('use_subproblem', types=bool, default=False, desc='If True, use a OAS subproblem and wrapper instead of directly adding OAS as a subsystem')
-        self.options.declare('compact_subproblem_coupling', types=bool, default=True)
+        self.options.declare('use_subproblem', types=bool, default=True, desc='If True, use a OAS subproblem and wrapper instead of directly adding OAS as a subsystem')
+        self.options.declare('compact_subproblem_coupling', types=bool, default=False)
         # If compact_subproblem_coupling = True, the wing geometry is within the subproblem (i.e., we'll have one wing geometry component per node).
         #     This is not efficient (for non-morping wing), but this simplified the coupling a lot. From the top-level problem into subprobelm, we'll only need to give the flight conditions (v, alpha, etc) and design variables (twist_cp, thickness_cp, etc).
         # If True, then the wing geometry is at the top-level, and subproblem only includes the analysis point. This should be more efficient.
@@ -88,7 +89,6 @@ class OASAnalyses(om.Group):
         indep_var_comp.add_output("speed_of_sound", val=340, units="m/s")
         indep_var_comp.add_output("R", val=10e3, units="m")
         indep_var_comp.add_output("load_factor", val=1.0, units=None)
-        indep_var_comp.add_output("element_mass", val=0., units="kg")
         
         # Add this IndepVarComp to the problem model
         self.add_subsystem("prob_vars", indep_var_comp, promotes=["*"])
@@ -125,7 +125,7 @@ class OASAnalyses(om.Group):
 
         # list of OAS variable names that changes depending on if we use subproblem or not
         oas_vars = {}
-        oas_vars['load_factor'] = {'mono': '.coupled.load_factor', 'sub-cpt': '.load_factor'}
+        oas_vars['load_factor'] = {'mono': '.coupled.load_factor', 'sub-cpt': '.load_factor', 'sub-eff': '.load_factor'}
         oas_vars['CL'] = {'mono': '.wing_perf.CL', 'sub-cpt': '.CL', 'sub-eff': '.CL'}
         oas_vars['CD'] = {'mono': '.wing_perf.CD', 'sub-cpt': '.CD', 'sub-eff': '.CD'}
         oas_vars['Lift'] = {'mono': '.total_perf.L', 'sub-cpt': '.Lift', 'sub-eff': '.Lift'}
@@ -168,12 +168,16 @@ class OASAnalyses(om.Group):
             
             if oas_type == 'mono':
                 # monolihic OM problem
-                promotes_inputs = ["Mach_number", "re", "empty_cg", "coupled.wing.element_mass", "load_factor", "beta", "CT", "speed_of_sound", "R"]
+                promotes_inputs = ["Mach_number", "re", "empty_cg", "load_factor", "beta", "CT", "speed_of_sound", "R"]
                 parallel_group.add_subsystem(point_name, AerostructPoint(surfaces=[surface]), promotes_inputs=promotes_inputs)
-            else:
+            elif oas_type == 'sub-cpt':
                 # subproblem
                 promotes_inputs = ["Mach_number", "re"]
                 parallel_group.add_subsystem(point_name, AeroStructPoint_SubProblemWrapper(surface=surface), promotes_inputs=promotes_inputs)
+            else:
+                # subproblem with no wing geometry
+                promotes_inputs = ["Mach_number", "re"]
+                parallel_group.add_subsystem(point_name, AeroStructPoint_SubProblemWrapper_NoGeometry(surface=surface), promotes_inputs=promotes_inputs)
             # END IF
 
             # --- connect inputs to OAS ---
@@ -186,9 +190,10 @@ class OASAnalyses(om.Group):
             self.connect('vector_in.alpha_vector', point_name + '.alpha', src_indices=i)
             self.connect('vector_in.m_vector', point_name + '.W0', src_indices=i)
 
-            if oas_type == 'mono' or oas_type == 'sub-eff':
+            if oas_type == 'mono':
                 # connection from wing geometry group to analysis point
                 self.connect(name + ".local_stiff_transformed", point_name + ".coupled." + name + ".local_stiff_transformed")
+                self.connect(name + ".element_mass", point_name + "." + "coupled." + name + ".element_mass")
                 self.connect(name + ".nodes", point_name + ".coupled." + name + ".nodes")
                 self.connect(name + ".mesh", point_name + ".coupled." + name + ".mesh")
                 com_name = point_name + "." + name + "_perf"
@@ -198,6 +203,16 @@ class OASAnalyses(om.Group):
                 self.connect(name + ".cg_location", point_name + "." + "total_perf." + name + "_cg_location")
                 self.connect(name + ".structural_mass", point_name + "." + "total_perf." + name + "_structural_mass")
                 self.connect(name + ".t_over_c", com_name + ".t_over_c")
+            elif oas_type == 'sub-eff':
+                self.connect(name + ".local_stiff_transformed", point_name + ".local_stiff_transformed")
+                self.connect(name + ".element_mass", point_name + ".element_mass")
+                self.connect(name + ".nodes", point_name + ".nodes")
+                self.connect(name + ".mesh", point_name + ".mesh")
+                self.connect(name + ".radius", point_name + ".radius")
+                self.connect(name + ".thickness", point_name + ".thickness")
+                self.connect(name + ".cg_location", point_name + ".cg_location")
+                self.connect(name + ".structural_mass", point_name + ".structural_mass")
+                self.connect(name + ".t_over_c", point_name + ".t_over_c")
             else:
                 # connect wing design variables for subproblem
                 self.connect('wing.twist_cp_out', point_name + '.twist_cp')

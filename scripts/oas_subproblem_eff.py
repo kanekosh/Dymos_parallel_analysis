@@ -4,9 +4,8 @@ import openmdao.api as om
 from openaerostruct.integration.aerostruct_groups import AerostructGeometry, AerostructPoint
 
 """
-OAS subproblem - compact coupling.
-Wing geometry component is within this subproblem. This is redundant when not actively morphing the wing.
-However, coupling between top-level Dymos problem and OAS subproblem (specifically, inputs from top to subproblem) is much simpler.
+OAS subproblem - efficient but less compact coupling.
+Wing geometry component at the top level, and this subproblem takes all geometry variables (like mesh) as inputs.
 """
 
 # WARNING: when you add additional design variables, states, or controls at the top-level, you'll need to change the inputs, outputs, and *partials* here.
@@ -37,10 +36,24 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         freestream Mach number
     re : float
         freestream Reynolds number, 1/m
-    twist_cp : numpy array
-        twist control points, deg
-    thickness_cp : numpy array
-        thickness control points, m
+    t_over_c : ndarray
+        thickness-to-chord ratio
+    mesh : ndarray
+        wing mesh
+    thickness : ndarray
+        structural thickness
+    radius : ndarray
+        structural radius
+    nodes : ndarray
+        FEM beam nodes
+    local_stiff_transformed : ndarray
+        local stiffness transformed
+    element_mass : ndarray
+        FEM element mass
+    structural_mass : ndarray
+        structural mass
+    cg_location : ndarray, (3,)
+        center of gravity location
     
     Returns
     -------
@@ -73,6 +86,9 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
     def setup(self):
         surface = self.options['surface']
 
+        mesh_shape = surface['mesh'].shape
+        ny = mesh_shape[1]
+
         # --- inputs ---
         # flight conditions
         self.add_input('v', val=10., units='m/s')
@@ -82,10 +98,17 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         self.add_input('load_factor', val=1.)
         self.add_input("Mach_number", val=0.044)
         self.add_input("re", val=1.0e6, units="1/m")
-        # wing design variables
-        self.add_input('twist_cp', val=surface["twist_cp"], units='deg')
-        self.add_input('thickness_cp', val=surface["thickness_cp"], units='m')
-
+        # wing geometry and structure
+        self.add_input('t_over_c', shape=(1, ny - 1), units=None)
+        self.add_input('mesh', shape=mesh_shape, units='m')
+        self.add_input('thickness', shape=(1, ny - 1), units='m')
+        self.add_input('radius', shape=(1, ny - 1), units='m')
+        self.add_input('nodes', shape=(ny, 3), units='m')
+        self.add_input('local_stiff_transformed', shape=(ny - 1, 12, 12), units=None)
+        self.add_input('element_mass', shape=(ny - 1,), units='kg')
+        self.add_input('structural_mass', shape=(1,), units='kg')
+        self.add_input('cg_location', shape=(3,), units='m')
+        
         # --- outputs ---
         # Lift and drag are used by dynamics model
         self.add_output('Lift', shape=(1,), units='N')
@@ -117,10 +140,11 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         # - declare the partial of failure to include failure constraint
         # - declare the partials w.r.t. load factor to include bank angle as control
         outputs = ['Lift', 'Drag']
-        inputs = ['v', 'alpha', 'W0']
+        self._inputs_list = ['v', 'alpha', 'W0']
         if self.options['optimize_design']:
-            inputs += ['twist_cp', 'thickness_cp']
-        self.declare_partials(outputs, inputs)
+            # wing design parameters
+            self._inputs_list += ['t_over_c', 'mesh', 'thickness', 'radius', 'nodes', 'local_stiff_transformed', 'element_mass', 'structural_mass', 'cg_location']
+        self.declare_partials(outputs, self._inputs_list)
 
         # ------------------------------------
         # setup OAS subproblem
@@ -144,22 +168,20 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         indep_var_comp.add_output("R", val=10e3, units="m")
         prob.model.add_subsystem("prob_vars", indep_var_comp, promotes=["*"])
 
-        # design variables
+        # wing design parameters
         design_var_comp = om.IndepVarComp()
-        design_var_comp.add_output("twist_cp", val=surface["twist_cp"], units='deg')
-        design_var_comp.add_output("thickness_cp", val=surface["thickness_cp"], units='m')
-        prob.model.add_subsystem('wing_design_vars', design_var_comp)
-
-        aerostruct_group = AerostructGeometry(surface=surface)
-
-        name = "wing"
-
-        # Add tmp_group to the problem with the name of the surface.
-        prob.model.add_subsystem(name, aerostruct_group)
-        # Connect design variables
-        prob.model.connect('wing_design_vars.twist_cp', name + '.twist_cp')
-        prob.model.connect('wing_design_vars.thickness_cp', name + '.thickness_cp')
-
+        prob.model.add_subsystem('wing_design_vars', design_var_comp, promotes_outputs=['*'])
+        design_var_comp.add_output('t_over_c', val=np.ones((1, ny - 1)) * 0.15, units=None)
+        design_var_comp.add_output('mesh', val=surface['mesh'], units='m')
+        design_var_comp.add_output('thickness', val=np.ones((1, ny - 1)) * 0.003, units='m')
+        design_var_comp.add_output('radius', val=np.ones((1, ny - 1)) * 0.01, units='m')
+        design_var_comp.add_output('nodes', shape=(ny, 3), units='m')
+        design_var_comp.add_output('local_stiff_transformed', shape=(ny - 1, 12, 12), units=None)
+        design_var_comp.add_output('element_mass', shape=(ny - 1,), units='kg')
+        design_var_comp.add_output('structural_mass', val=1., units='kg')
+        design_var_comp.add_output('cg_location', val=np.zeros(3), units='m')
+        
+        # analysis point
         point_name = "AS_point"
 
         # Create the aero point group and add it to the model
@@ -177,22 +199,21 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         prob.model.connect('rho', point_name + ".rho")
         prob.model.connect('W0', point_name + ".W0")
 
-        # Establish connections not taken care of internally
-        prob.model.connect(name + ".local_stiff_transformed", point_name + ".coupled." + name + ".local_stiff_transformed")
-        prob.model.connect(name + ".nodes", point_name + ".coupled." + name + ".nodes")
-        prob.model.connect(name + ".element_mass", point_name + ".coupled." + name + ".element_mass")
-
-        # Connect aerodyamic mesh to coupled group mesh
-        prob.model.connect(name + ".mesh", point_name + ".coupled." + name + ".mesh")
-
+        # connect wing geometries
+        name = 'wing'
+        prob.model.connect("local_stiff_transformed", point_name + ".coupled." + name + ".local_stiff_transformed")
+        prob.model.connect("nodes", point_name + ".coupled." + name + ".nodes")
+        prob.model.connect("element_mass", point_name + "." + "coupled." + name + ".element_mass")
+        prob.model.connect("mesh", point_name + ".coupled." + name + ".mesh")
+        
         # Connect performance calculation variables
         com_name = point_name + "." + name + "_perf"
-        prob.model.connect(name + ".radius", com_name + ".radius")
-        prob.model.connect(name + ".thickness", com_name + ".thickness")
-        prob.model.connect(name + ".nodes", com_name + ".nodes")
-        prob.model.connect(name + ".cg_location", point_name + "." + "total_perf." + name + "_cg_location")
-        prob.model.connect(name + ".structural_mass", point_name + "." + "total_perf." + name + "_structural_mass")
-        prob.model.connect(name + ".t_over_c", com_name + ".t_over_c")
+        prob.model.connect("radius", com_name + ".radius")
+        prob.model.connect("thickness", com_name + ".thickness")
+        prob.model.connect("nodes", com_name + ".nodes")
+        prob.model.connect("cg_location", point_name + "." + "total_perf." + name + "_cg_location")
+        prob.model.connect("structural_mass", point_name + "." + "total_perf." + name + "_structural_mass")
+        prob.model.connect("t_over_c", com_name + ".t_over_c")
 
         # Set up the problem
         self._point_name = point_name
@@ -208,6 +229,8 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         # call final_setup here to eliminate it from run_model timing
         self._prob_OAS.final_setup()
 
+        ### om.n2(self._prob_OAS, outfile='n2_OAS_subproblem_eff.html', show_browser=True)
+
     def compute(self, inputs, outputs):
         point_name = self._point_name
 
@@ -221,8 +244,15 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         self._prob_OAS.set_val('re', inputs['re'], units='1/m')
 
         # set design variables
-        self._prob_OAS.set_val('wing_design_vars.twist_cp', inputs['twist_cp'], units='deg')
-        self._prob_OAS.set_val('wing_design_vars.thickness_cp', inputs['thickness_cp'], units='m')
+        self._prob_OAS.set_val('t_over_c', inputs['t_over_c'], units=None)
+        self._prob_OAS.set_val('mesh', inputs['mesh'], units='m')
+        self._prob_OAS.set_val('thickness', inputs['thickness'], units='m')
+        self._prob_OAS.set_val('radius', inputs['radius'], units='m')
+        self._prob_OAS.set_val('nodes', inputs['nodes'], units='m')
+        self._prob_OAS.set_val('local_stiff_transformed', inputs['local_stiff_transformed'], units=None)
+        self._prob_OAS.set_val('element_mass', inputs['element_mass'], units='kg')
+        self._prob_OAS.set_val('structural_mass', inputs['structural_mass'], units='kg')
+        self._prob_OAS.set_val('cg_location', inputs['cg_location'], units='m')
 
         # run OAS analysis
         self._prob_OAS.run_model()
@@ -232,9 +262,9 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         # get outputs from the model
         outputs['Lift'] = self._prob_OAS.get_val(point_name + ".total_perf.L", units='N')
         outputs['Drag'] = self._prob_OAS.get_val(point_name + ".total_perf.D", units='N')
+
         outputs['CL'] = self._prob_OAS.get_val(point_name + ".wing_perf.CL")
         outputs['CD'] = self._prob_OAS.get_val(point_name + ".wing_perf.CD")
-
         outputs['S_ref'] = self._prob_OAS.get_val(point_name + ".coupled.wing.S_ref", units='m**2')
         outputs['Cl'] = self._prob_OAS.get_val(point_name + ".wing_perf.Cl")
         outputs['sec_forces'] = self._prob_OAS.get_val(point_name + ".coupled.aero_states.wing_sec_forces", units='N')
@@ -251,22 +281,11 @@ class AeroStructPoint_SubProblemWrapper(om.ExplicitComponent):
         self.compute(inputs, {})
 
         of = [point_name + ".total_perf.L", point_name + ".total_perf.D"]
-        wrt = ['v', 'alpha', 'W0']
-        if self.options['optimize_design']:
-            wrt += ['wing_design_vars.twist_cp', 'wing_design_vars.thickness_cp']
-        derivs = self._prob_OAS.compute_totals(of, wrt)
+        derivs = self._prob_OAS.compute_totals(of=of, wrt=self._inputs_list)
 
-        partials['Lift', 'v'] = derivs[(point_name + ".total_perf.L", 'v')]
-        partials['Lift', 'alpha'] = derivs[(point_name + ".total_perf.L", 'alpha')]
-        partials['Lift', 'W0'] = derivs[(point_name + ".total_perf.L", 'W0')]
-        partials['Drag', 'v'] = derivs[(point_name + ".total_perf.D", 'v')]
-        partials['Drag', 'alpha'] = derivs[(point_name + ".total_perf.D", 'alpha')]
-        partials['Drag', 'W0'] = derivs[(point_name + ".total_perf.D", 'W0')]
-        if self.options['optimize_design']:
-            partials['Lift', 'twist_cp'] = derivs[(point_name + ".total_perf.L", 'wing_design_vars.twist_cp')]
-            partials['Lift', 'thickness_cp'] = derivs[(point_name + ".total_perf.L", 'wing_design_vars.thickness_cp')]
-            partials['Drag', 'twist_cp'] = derivs[(point_name + ".total_perf.D", 'wing_design_vars.twist_cp')]
-            partials['Drag', 'thickness_cp'] = derivs[(point_name + ".total_perf.D", 'wing_design_vars.thickness_cp')]
+        for input_name in self._inputs_list:
+            partials['Lift', input_name] = derivs[(point_name + ".total_perf.L", input_name)]
+            partials['Drag', input_name] = derivs[(point_name + ".total_perf.D", input_name)]
 
 
 if __name__ == '__main__':
@@ -297,15 +316,17 @@ if __name__ == '__main__':
     prob.set_val('re', 1.0e6, units='1/m')
 
     # set design variables
-    prob.set_val('twist_cp', surface['twist_cp'], units='deg')
-    prob.set_val('thickness_cp', surface['thickness_cp'], units='m')
+    # prob.set_val('twist_cp', surface['twist_cp'], units='deg')
+    # prob.set_val('thickness_cp', surface['thickness_cp'], units='m')
 
-    prob.run_model()
+    # om.n2(prob)
+
+    # prob.run_model()   # this fails because the default geometry is not valid
 
     # prob.check_partials(compact_print=True)
 
-    derivs = prob.compute_totals(['CL', 'CD'], ['v', 'alpha', 'W0'])
-    print('\n--- Total derivatives ---')
-    print(derivs)
+    # derivs = prob.compute_totals(['CL', 'CD'], ['v', 'alpha', 'W0'])
+    # print('\n--- Total derivatives ---')
+    # print(derivs)
 
     om.n2(prob, outfile='n2_OAS_wrapper.html', show_browser=False)
