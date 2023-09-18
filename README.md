@@ -43,6 +43,7 @@ A summary of memory usage scaling can be found [here](scaling_study/README.md).
 ## Ref: Python files
 All Python files are in `scripts`.
 - `run_optimization.py`: trajectory optimization runscript. Currently, this does not call `run_driver` for debugging purposes. Instead, it only calls `run_model` and `compute_totals` once after setting up the optimization problem. 
+- `run_oas_multipoint.py`: runscript for a massive multipoint OAS problem without Dymos.
 - `get_oas_surface.py`: creates an OAS surface.
 - `dynamics.py`: aircraft ODE Group. Inside the ODE Group, we have an aerodynamic Group `AeroForceOAS` (defined in `aero_oas.py`) which does the aerostructural analyses.
 - `aero_oas.py`: aerodynamic model. The Group `OASAnalyses` implements the parallel-in-node OAS analyses.
