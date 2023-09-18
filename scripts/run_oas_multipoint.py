@@ -19,6 +19,7 @@ import time as time_package
 from dynamics import Aircraft2DODE
 from get_oas_surface import get_OAS_surface
 
+
 if __name__ == '__main__':
     # set problem size here.
     num_segments = 100   # number of segments in dymos trajectory
@@ -78,7 +79,6 @@ if __name__ == '__main__':
     prob.model.connect('wing_design_vars.twist_cp', 'aero.OAS.wing.twist_cp')
     prob.model.connect('wing_design_vars.thickness_cp', 'aero.OAS.wing.thickness_cp')
     # fixed inputs to dynamics model
-    prob.model.set_input_defaults('S_ref', Sref, units='m**2')
     prob.model.set_input_defaults('m', mass * np.ones(num_nodes), units='kg')
 
     # some non-important objective and constraints
@@ -144,6 +144,3 @@ if __name__ == '__main__':
         print('   `run_model` :', t_run_model)
         print('   `compute_totals` :', t_compute_totals)
     """
-
-
-

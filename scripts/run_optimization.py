@@ -50,8 +50,8 @@ if __name__ == '__main__':
     thrust_UB = mass * 9.81 * 0.15
 
     # --- setup OAS surface ---
-    ### surface = get_OAS_surface(Sref, span, num_y=21, num_x=5)
-    surface = get_OAS_surface(Sref, span, num_y=5, num_x=2)   # use coarse mesh when computing total coloring. Also, for this mesh size, DirectSolver at top-level is much faster than PETSc linear solver.
+    surface = get_OAS_surface(Sref, span, num_y=21, num_x=5)
+    ### surface = get_OAS_surface(Sref, span, num_y=5, num_x=2)   # use coarse mesh when computing total coloring. Also, for this mesh size, DirectSolver at top-level is much faster than PETSc linear solver.
 
     # --------------------------
     # Setup OpenMDAO problem
@@ -72,7 +72,7 @@ if __name__ == '__main__':
     traj = dm.Trajectory()
     prob.model.add_subsystem('traj', traj)
 
-    tx = dm.Radau(num_segments=10, order=3, solve_segments=False, compressed=True)
+    tx = dm.Radau(num_segments=40, order=3, solve_segments=False, compressed=True)
     ### tx = dm.Radau(num_segments=20, order=3, solve_segments=False, compressed=True)
     nn = tx.grid_data.num_nodes
 
@@ -218,6 +218,6 @@ if __name__ == '__main__':
         # plt.show()
 
         # save total derivatives
-        with open('total_derivs.pkl', 'wb') as f:
-            pickle.dump(total_derivs, f)
+        # with open('total_derivs.pkl', 'wb') as f:
+        #     pickle.dump(total_derivs, f)
     
