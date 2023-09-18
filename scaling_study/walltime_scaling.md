@@ -1,13 +1,13 @@
 # Wall time scaling
 
-## NOTE on problem setup
+## Problem setup
 OpenAeroStruct mesh: `num_y=21, num_x=5`.  
-Dymos grid setting:  `tx = dm.Radau(num_segments=Nseg, order=3, solve_segments=False, compressed=True)`, where `Nseg=20` or `40`.
+Dymos grid setting:  `tx = dm.Radau(num_segments=Nseg, order=3, solve_segments=False, compressed=True)`, where `Nseg=20` or `40`.  
 (Note that I used different number of segments from the memory scaling studies.)
 
 All of the scaling studies below are the strong scaling study, i.e., the problem size remains the same for all numbers of processors.
 
-## Scaling results on my workstation
+## 1. Scaling results on my workstation
 
 The following tables summarizes the wall time scaling studies on 20 and 40 Dymos segments.
 Timing is split into  `setup`, `final_setup`, `run_model`, and `compute_totals`.
@@ -33,14 +33,14 @@ Timing is split into  `setup`, `final_setup`, `run_model`, and `compute_totals`.
 
 \
 \
-**Speedup plot (of strong scaling) for `num_segments = 20` on my workstation**
+**Speedup plot for `num_segments = 20` on my workstation**
 ![Speed up (num_segments = 20) on workstation](https://github.com/kanekosh/Dymos_parallel_analysis/blob/main/scaling_study/figs/speedup_Nseg20.jpg?raw=true)
 
 \
 **Speedup plot for `num_segments = 40` on my workstation**
 ![Speed up (num_segments = 40) on workstation](https://github.com/kanekosh/Dymos_parallel_analysis/blob/main/scaling_study/figs/speedup_Nseg40.jpg?raw=true)
 
-## Scaling results on a HPC cluster (Stampede2 SKX node)
+## 2. Scaling results on a HPC cluster (Stampede2 SKX node)
 
 I ran the same strong scaling study on a Stampede2 SKX node.
 I only used single node, which has 48 processors and 192 GB RAM.
@@ -49,7 +49,7 @@ The scaling is much better on Stampede than on my workstation.
 For the `num_segments=40` case with 40 processors, it ran out of memory during `prob.setup()`, therefore I could not measure the wall time.
 \
 \
-**Speedup plot (of strong scaling) for `num_segments = 20` on Stampede**
+**Speedup plot for `num_segments = 20` on Stampede**
 ![Speed up (num_segments = 20) on stampede](https://github.com/kanekosh/Dymos_parallel_analysis/blob/main/scaling_study/figs/speedup_Nseg20_stampede.jpg?raw=true)
 
 \

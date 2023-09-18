@@ -1,14 +1,14 @@
 # Memory Usage Scaling
 
-## NOTE on problem setup
+## Problem setup
 OpenAeroStruct mesh: `num_y=21, num_x=5`.  
-Dymos grid setting: `tx = dm.Radau(num_segments=40, order=3, solve_segments=False, compressed=True)`.
-This results in 160 nodes, each of them has an OAS analysis inside.
+Dymos grid setting: `tx = dm.Radau(num_segments=40, order=3, solve_segments=False, compressed=True)`.  
+This results in 160 nodes, each of them has an OAS analysis inside.  
 (Note that I used different number of segments from the wall time scaling studies.)
 
 All of the scaling studies below are the strong scaling study, i.e., the problem size remains the same for all numbers of processors.
 
-## Dymos+OAS monolithic problem
+## 1. Dymos+OAS monolithic problem
 
 The following table summarizes the maximum memory usage *per processor* for each part of the code: `setup`, `final_setup`, `run_model`, and `compute_totals`.  
 The memory usage is shown in % of the total memory of my machine (64 GB).
@@ -25,7 +25,7 @@ These are manually monitored using the `top` command.
 The `setup` call requires nearly constant memory per processor, therefore the total memory usage of all processors is close to linear w.r.t. the number of processor.  
 With `mpirun -n 16`, it runs out of the memory (64 GB) during `setup`.
 
-## Dymos+OAS problem using subproblem for OAS analyses - did not help!
+## 2. Dymos+OAS problem using subproblems for OAS analyses - did not help
 Above, I directly put OAS analysis as a group under the dynamics group.
 This results in a very big single OpenMDAO model that has access to all OAS components and variables.
 I'd call this a *monolithic* approach.
@@ -50,7 +50,7 @@ The memory usage trends was similar to the monolithic approach.
 The current runscript is defaulted to the monolithic approach.
 To run the subproblem approach, go to `aero_oas.py`, and in `OASAnalyses` group, set the option `use_subproblem` to `True`.
 
-## Massive multipoint OAS problem (without Dymos)
+## 3. Massive multipoint OAS problem (without Dymos) - scales well
 
 Finally, I also run a massive multipoint OAS problem without Dymos, which has (kind of) a similar problem structure to the Dymos+OAS problem.
 For this case, I used a different OAS mesh size (41x9) and the number of nodes (400 nodes) to see the trends clearly.

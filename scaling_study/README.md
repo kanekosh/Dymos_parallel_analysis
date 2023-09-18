@@ -5,4 +5,5 @@ The issue seems to be that the memory usage during `prob.setup()` increases near
 This happens for a Dymos+OAS problem but not for a massive multipoint OAS problem.
 
 ## [Wall time scaling](./walltime_scaling.md)
-The speedup was primarily limited mainly because of the memory bound, and I don't think this is an issue with OpenMDAO.
+The speedup was primarily limited mainly because of the memory bound.
+I don't think this is an issue with OpenMDAO.
