@@ -40,10 +40,10 @@ Timing is split into  `setup`, `final_setup`, `run_model`, and `compute_totals`.
 **Speedup plot for `num_segments = 40` on my workstation**
 ![Speed up (num_segments = 40) on workstation](https://github.com/kanekosh/Dymos_parallel_analysis/blob/main/scaling_study/figs/speedup_Nseg40.jpg?raw=true)
 
-## 2. Scaling results on a HPC cluster (Stampede2 SKX node)
+## 2. Scaling results on an HPC cluster (Stampede2 SKX node)
 
 I ran the same strong scaling study on a Stampede2 SKX node.
-I only used single node, which has 48 processors and 192 GB RAM.
+I only used a single node, which has 48 processors and 192 GB RAM.
 
 The scaling is much better on Stampede than on my workstation.
 For the `num_segments=40` case with 40 processors, it ran out of memory during `prob.setup()`, therefore I could not measure the wall time.
