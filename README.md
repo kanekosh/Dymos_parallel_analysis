@@ -1,4 +1,6 @@
 # Dymos trajectory optimization with parallel aerostructural analyses
+## NOTE
+This issue was fixed by the [PR #1001 on Dymos](https://github.com/OpenMDAO/dymos/pull/1001) thanks to John Jasa.
 
 ## Problem setup
 This repo implements a toy trajectory optimization problem that minimizes the energy consumption for a level, straight flight of aircraft.
